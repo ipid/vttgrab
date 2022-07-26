@@ -1,27 +1,50 @@
-use anyhow::{Result, Error};
+use clap::Parser;
 
-fn main() -> Result<()> {
-    let fucking_string = String::from("Fuck you!");
+#[derive(Parser)]
+#[clap(about = "M3U8 WebVTT 字幕流下载工具")]
+struct Args {
+    /// M3U8 字幕的 URL
+    url: String,
 
-    let request_baidu = async {
-        let client = reqwest::Client::builder()
-            .gzip(true)
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36")
-            .build()?;
+    /// 向服务器提交的 User-Agent 字段
+    #[clap(long)]
+    user_agent: Option<String>,
+}
 
-        let response = client.get("https://www.baidu.com").send().await?;
-        let text = response.text_with_charset("utf-8").await?;
+struct Downloader {
+    client: reqwest::Client,
+}
 
-        println!("{}", text);
-        std::mem::drop(fucking_string);
+impl Downloader {
+    fn new(user_agent: Option<&str>) -> Downloader {
+        let mut builder = reqwest::Client::builder();
 
-        Result::<(), Error>::Ok(())
-    };
+        if let Some(user_agent) = user_agent {
+            builder = builder.user_agent(user_agent);
+        }
 
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(request_baidu)?;
+        Downloader {
+            client: builder
+                .build()
+                .expect("reqwest builder 构建失败"),
+        }
+    }
+}
 
-    println!("{}", fucking_string);
+async fn async_main(args: Args) -> Result<(), anyhow::Error> {
+    let downloader = Downloader::new(args.user_agent.as_deref());
+    
 
     Ok(())
+}
+
+fn main() {
+    let args = Args::parse();
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async_main(args)).unwrap();
 }
