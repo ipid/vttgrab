@@ -1,61 +1,71 @@
 use std::time::Duration;
 
+use anyhow::Result;
 use clap::Parser;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 #[derive(Parser)]
-#[clap(about = "M3U8 WebVTT 字幕流下载工具")]
+#[clap(about = "M3U8 WebVTT 字幕流下载工具。")]
 struct Args {
     /// M3U8 字幕的 URL
     url: String,
 
     /// 向服务器提交的 HTTP 头
-    #[clap(long, short)]
-    user_agent: Option<String>,
+    #[clap(short = 'h', long = "header")]
+    headers: Vec<String>,
 }
 
 struct Downloader {
     client: reqwest::Client,
+    url: String,
 }
 
 impl Downloader {
-    fn new(args: &Args) -> Downloader {
-        let mut builder = reqwest::Client::builder();
+    fn new(args: Args) -> Downloader {
+        let Args { url, headers } = args;
 
-        if let Some(ref user_agent) = args.user_agent {
-            builder = builder.user_agent(user_agent);
-        }
+        let mut header_map: HeaderMap<HeaderValue> = HeaderMap::with_capacity(headers.len());
+        headers.iter().for_each(|raw_header| {
+            let (key, value) = raw_header.split_once(":").expect(
+                "-h/--header 参数值有误。\n\
+                    您输入的 HTTP 头应该是 Key: Value 的格式，但是您输入的参数中没有冒号。\n\
+                    请您注意：\n\
+                    \n\
+                    · -h/--header 后面的参数值最好加上引号。\n\
+                    · Windows 下可以使用双引号，Linux 下可以使用单引号。\n\
+                    \n\
+                    示例：\n\
+                    ·   --header 'Content-Type: application/json'\n\
+                    ",
+            );
 
-        let client = builder
-            .pool_idle_timeout(Duration::from_secs(120))
-            .pool_max_idle_per_host(1024)
-            .default_headers()
+            let header_name: HeaderName = key.trim().try_into().expect("HTTP 头名称有误。");
+            let header_value: HeaderValue = value.trim().try_into().expect("HTTP 头值有误。");
+
+            header_map.append(header_name, header_value);
+        });
+
+        let client = reqwest::Client::builder()
+            // .connect_timeout(Duration::from_secs(8))
+            // .pool_idle_timeout(Duration::from_secs(120))
+            // .pool_max_idle_per_host(1024)
+            // .default_headers(header_map)
             .build()
-            .expect("reqwest builder 构建失败");
+            .expect("reqwest Client 构建失败。");
 
-        Downloader { client }
+        Downloader { client, url }
     }
 
-    async fn download_main_m3u8(&self, url: &str) -> Result<String, anyhow::Error> {
-        let response = self.client.get(url).send().await?;
+    async fn download_main_m3u8(&self) -> Result<String> {
+        let response = self.client.get(&self.url).send().await?;
+        println!("{} 连接成功，状态码：{}", self.url, response.status());
         Ok(response.text().await?)
     }
 }
 
-async fn async_main(args: Args) -> Result<(), anyhow::Error> {
-    let downloader = Downloader::new(args.user_agent.as_deref());
-    let main_m3u8 = downloader.download_main_m3u8(&args.url).await?;
-    println!("{main_m3u8}");
-
-    Ok(())
-}
-
-fn main() -> () {
-    let args = Args::parse();
-
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    runtime.block_on(async_main(args)).unwrap();
+#[tokio::main]
+async fn main() {
+    let downloader = Downloader::new(Args::parse());
+    let m3u8_text = downloader.download_main_m3u8().await.expect("下载 M3U8 失败。");
+    println!("m3u8_text: <{}>", m3u8_text);
 }
